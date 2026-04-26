@@ -1,0 +1,15 @@
+# 币安套利机器人
+# Binance Perpetual Futures Funding Rate Arbitrage Bot
+
+fastapi==0.109.0
+uvicorn==0.27.0
+python-binance==1.0.19
+python-dotenv==1.0.0
+pydantic==2.5.3
+sqlalchemy==2.0.25
+aiosqlite==0.19.0
+httpx==0.26.0
+pandas==2.2.0
+numpy==1.26.3
+python-multipart==0.0.6
+cryptography==42.0.0

@@ -1,0 +1,992 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BNB 永续合约套利机器人</title>
+
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Font Awesome -->
+    <link href="https://cdn.bootcdn.net/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
+    <!-- ECharts -->
+    <script src="https://cdn.bootcdn.net/ajax/libs/echarts/5.4.3/echarts.min.js"></script>
+
+    <style>
+        :root {
+            --primary-color: #1a73e8;
+            --success-color: #00c853;
+            --danger-color: #ff1744;
+            --warning-color: #ffc107;
+            --dark-bg: #1a1a2e;
+            --card-bg: #16213e;
+            --text-color: #e0e0e0;
+        }
+
+        body {
+            background: linear-gradient(135deg, var(--dark-bg) 0%, #0f3460 100%);
+            color: var(--text-color);
+            min-height: 100vh;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        .navbar {
+            background: rgba(22, 33, 62, 0.95) !important;
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .navbar-brand {
+            font-weight: 600;
+            background: linear-gradient(90deg, #00d9ff, #00ff88);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        }
+
+        .card-header {
+            background: rgba(0,0,0,0.3);
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            font-weight: 600;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, var(--card-bg) 0%, rgba(26,115,232,0.2) 100%);
+            border: 1px solid rgba(26,115,232,0.3);
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            background: linear-gradient(90deg, #00d9ff, #00ff88);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .stat-label {
+            color: #888;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #1a73e8, #0d47a1);
+            border: none;
+            border-radius: 8px;
+            padding: 10px 24px;
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #00c853, #00a844);
+            border: none;
+            border-radius: 8px;
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #ff1744, #d50000);
+            border: none;
+            border-radius: 8px;
+        }
+
+        .btn-outline-light {
+            border-radius: 8px;
+        }
+
+        .table {
+            color: var(--text-color);
+        }
+
+        .table > thead {
+            background: rgba(0,0,0,0.3);
+        }
+
+        .table-hover tbody tr:hover {
+            background: rgba(26,115,232,0.1);
+        }
+
+        .positive {
+            color: var(--success-color);
+        }
+
+        .negative {
+            color: var(--danger-color);
+        }
+
+        .badge-funding {
+            background: linear-gradient(135deg, #00c853, #00a844);
+        }
+
+        .badge-warning {
+            background: linear-gradient(135deg, #ffc107, #ff9800);
+        }
+
+        .modal-content {
+            background: var(--card-bg);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .form-control, .form-select {
+            background: rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.2);
+            color: var(--text-color);
+        }
+
+        .form-control:focus, .form-select:focus {
+            background: rgba(0,0,0,0.4);
+            border-color: var(--primary-color);
+            color: var(--text-color);
+        }
+
+        .input-group-text {
+            background: rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.2);
+            color: #888;
+        }
+
+        .status-badge {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .status-running {
+            background: var(--success-color);
+            animation: pulse 1.5s infinite;
+        }
+
+        .status-stopped {
+            background: #666;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        #chart {
+            width: 100%;
+            height: 300px;
+        }
+
+        .nav-tabs {
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .nav-tabs .nav-link {
+            color: #888;
+            border: none;
+            border-bottom: 2px solid transparent;
+        }
+
+        .nav-tabs .nav-link:hover {
+            color: var(--text-color);
+            border-color: transparent;
+        }
+
+        .nav-tabs .nav-link.active {
+            color: var(--primary-color);
+            background: transparent;
+            border: none;
+            border-bottom: 2px solid var(--primary-color);
+        }
+
+        .refresh-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--success-color);
+            margin-left: 8px;
+            animation: blink 1s infinite;
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        .api-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+    </style>
+</head>
+<body>
+    <!-- 导航栏 -->
+    <nav class="navbar navbar-expand-lg navbar-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#">
+                <i class="fas fa-robot me-2"></i>
+                BNB 永续合约套利机器人
+            </a>
+            <div class="d-flex align-items-center">
+                <div class="api-status me-3">
+                    <span class="status-badge" id="apiStatusBadge"></span>
+                    <span id="apiStatusText">未连接</span>
+                </div>
+                <button class="btn btn-sm btn-outline-light" onclick="showSettingsModal()">
+                    <i class="fas fa-cog"></i>
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- 主内容 -->
+    <div class="container-fluid py-4">
+        <!-- 统计卡片 -->
+        <div class="row mb-4">
+            <div class="col-md-2">
+                <div class="card stat-card p-3">
+                    <div class="stat-label">账户余额</div>
+                    <div class="stat-value" id="statBalance">--</div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="card stat-card p-3">
+                    <div class="stat-label">总收益</div>
+                    <div class="stat-value" id="statPnl">--</div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="card stat-card p-3">
+                    <div class="stat-label">资金费率收益</div>
+                    <div class="stat-value" id="statFunding">--</div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="card stat-card p-3">
+                    <div class="stat-label">胜率</div>
+                    <div class="stat-value" id="statWinRate">--</div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="card stat-card p-3">
+                    <div class="stat-label">当前持仓</div>
+                    <div class="stat-value" id="statPositions">--</div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="card stat-card p-3">
+                    <div class="stat-label">引擎状态</div>
+                    <div class="stat-value" id="statEngine">
+                        <span class="status-badge status-stopped"></span>
+                        <span>已停止</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 主面板 -->
+        <div class="row">
+            <!-- 套利机会列表 -->
+            <div class="col-lg-8">
+                <div class="card mb-4">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span><i class="fas fa-chart-line me-2"></i>套利机会</span>
+                        <div>
+                            <div class="input-group input-group-sm" style="width: 200px;">
+                                <span class="input-group-text">最小资金费率</span>
+                                <input type="number" class="form-control" id="minRateFilter"
+                                       value="0.01" step="0.01" min="0">
+                                <span class="input-group-text">%</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <table class="table table-hover" id="opportunitiesTable">
+                            <thead>
+                                <tr>
+                                    <th>交易对</th>
+                                    <th>现货价格</th>
+                                    <th>合约价格</th>
+                                    <th>资金费率</th>
+                                    <th>年化收益</th>
+                                    <th>溢价</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="opportunitiesBody">
+                                <tr>
+                                    <td colspan="7" class="text-center text-muted">
+                                        点击"扫描机会"获取数据
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- 当前持仓 -->
+                <div class="card mb-4">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span><i class="fas fa-wallet me-2"></i>当前持仓</span>
+                        <button class="btn btn-sm btn-danger" onclick="closeAllPositions()">
+                            <i class="fas fa-times me-1"></i>全部平仓
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <table class="table table-hover" id="positionsTable">
+                            <thead>
+                                <tr>
+                                    <th>交易对</th>
+                                    <th>方向</th>
+                                    <th>数量</th>
+                                    <th>开仓价</th>
+                                    <th>当前价</th>
+                                    <th>浮动盈亏</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="positionsBody">
+                                <tr>
+                                    <td colspan="7" class="text-center text-muted">
+                                        暂无持仓
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右侧面板 -->
+            <div class="col-lg-4">
+                <!-- 引擎控制 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <i class="fas fa-cogs me-2"></i>引擎控制
+                    </div>
+                    <div class="card-body">
+                        <div class="d-grid gap-2 mb-3">
+                            <button class="btn btn-success" id="startBtn" onclick="startEngine()">
+                                <i class="fas fa-play me-2"></i>启动套利引擎
+                            </button>
+                            <button class="btn btn-danger" id="stopBtn" onclick="stopEngine()" disabled>
+                                <i class="fas fa-stop me-2"></i>停止套利引擎
+                            </button>
+                        </div>
+                        <button class="btn btn-primary w-100" onclick="scanOpportunities()">
+                            <i class="fas fa-search me-2"></i>扫描套利机会
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 策略配置 -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <i class="fas fa-sliders-h me-2"></i>策略配置
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label">最小资金费率 (%)</label>
+                            <input type="number" class="form-control" id="strategyMinRate"
+                                   value="0.01" step="0.01" min="0">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">最大持仓金额 (USDT)</label>
+                            <input type="number" class="form-control" id="strategyMaxSize"
+                                   value="1000" step="100" min="50">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">杠杆倍数</label>
+                            <select class="form-select" id="strategyLeverage">
+                                <option value="1">1x</option>
+                                <option value="2">2x</option>
+                                <option value="3" selected>3x</option>
+                                <option value="5">5x</option>
+                                <option value="10">10x</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">止损比例 (%)</label>
+                            <input type="number" class="form-control" id="strategyStopLoss"
+                                   value="2" step="0.5" min="0">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">止盈比例 (%)</label>
+                            <input type="number" class="form-control" id="strategyTakeProfit"
+                                   value="5" step="0.5" min="0">
+                        </div>
+                        <div class="form-check mb-3">
+                            <input class="form-check-input" type="checkbox" id="strategyAutoExecute">
+                            <label class="form-check-label" for="strategyAutoExecute">
+                                自动执行套利
+                            </label>
+                        </div>
+                        <button class="btn btn-outline-light w-100" onclick="saveStrategy()">
+                            <i class="fas fa-save me-2"></i>保存配置
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 收益图表 -->
+                <div class="card">
+                    <div class="card-header">
+                        <i class="fas fa-chart-area me-2"></i>收益统计
+                    </div>
+                    <div class="card-body">
+                        <div id="chart"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- API 配置模态框 -->
+    <div class="modal fade" id="settingsModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="fas fa-key me-2"></i>API 配置
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle me-2"></i>
+                        请到 <a href="https://www.binance.com/zh-CN/my/settings/api-management"
+                               target="_blank" class="alert-link">币安官网</a> 创建 API 密钥，
+                        并开启「允许合约交易」权限。
+                    </div>
+
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" id="useTestnet">
+                        <label class="form-check-label" for="useTestnet">
+                            使用测试网 (Testnet)
+                        </label>
+                    </div>
+
+                    <div class="mb-4">
+                        <h6 class="text-primary mb-3">
+                            <i class="fas fa-exchange-alt me-2"></i>合约 API (必填)
+                        </h6>
+                        <div class="mb-3">
+                            <label class="form-label">API Key</label>
+                            <input type="text" class="form-control" id="futuresApiKey"
+                                   placeholder="请输入合约 API Key">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Secret Key</label>
+                            <input type="password" class="form-control" id="futuresSecretKey"
+                                   placeholder="请输入合约 Secret Key">
+                        </div>
+                    </div>
+
+                    <div class="mb-4">
+                        <h6 class="text-muted mb-3">
+                            <i class="fas fa-coins me-2"></i>现货 API (可选)
+                        </h6>
+                        <div class="mb-3">
+                            <label class="form-label">API Key</label>
+                            <input type="text" class="form-control" id="spotApiKey"
+                                   placeholder="请输入现货 API Key (留空使用合约账户)">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Secret Key</label>
+                            <input type="password" class="form-control" id="spotSecretKey"
+                                   placeholder="请输入现货 Secret Key">
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-light" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" onclick="saveCredentials()">
+                        <i class="fas fa-save me-2"></i>保存并连接
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/js/bootstrap.bundle.min.js"></script>
+
+    <script>
+        // 全局变量
+        let chart = null;
+        let refreshTimer = null;
+        let currentPositions = [];
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            initChart();
+            checkApiStatus();
+            loadStrategy();
+            loadStats();
+        });
+
+        // 初始化图表
+        function initChart() {
+            chart = echarts.init(document.getElementById('chart'));
+            const option = {
+                tooltip: {
+                    trigger: 'axis',
+                    axisPointer: { type: 'cross' }
+                },
+                legend: {
+                    data: ['总收益', '资金费率收益'],
+                    textStyle: { color: '#888' }
+                },
+                grid: {
+                    left: '3%',
+                    right: '4%',
+                    bottom: '3%',
+                    containLabel: true
+                },
+                xAxis: {
+                    type: 'category',
+                    boundaryGap: false,
+                    data: [],
+                    axisLine: { lineStyle: { color: '#444' } },
+                    axisLabel: { color: '#888' }
+                },
+                yAxis: {
+                    type: 'value',
+                    axisLine: { lineStyle: { color: '#444' } },
+                    axisLabel: { color: '#888', formatter: '{value} USDT' },
+                    splitLine: { lineStyle: { color: '#333' } }
+                },
+                series: [
+                    {
+                        name: '总收益',
+                        type: 'line',
+                        smooth: true,
+                        data: [],
+                        itemStyle: { color: '#00d9ff' }
+                    },
+                    {
+                        name: '资金费率收益',
+                        type: 'line',
+                        smooth: true,
+                        data: [],
+                        itemStyle: { color: '#00ff88' }
+                    }
+                ]
+            };
+            chart.setOption(option);
+        }
+
+        // 检查 API 状态
+        async function checkApiStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const result = await response.json();
+
+                if (result.success) {
+                    const data = result.data;
+                    const isConfigured = data.api_configured;
+
+                    document.getElementById('apiStatusBadge').className =
+                        'status-badge ' + (isConfigured ? 'status-running' : 'status-stopped');
+                    document.getElementById('apiStatusText').textContent =
+                        isConfigured ? '已连接' : '未连接';
+
+                    if (!isConfigured) {
+                        showSettingsModal();
+                    }
+                }
+            } catch (e) {
+                console.error('检查API状态失败:', e);
+            }
+        }
+
+        // 扫描套利机会
+        async function scanOpportunities() {
+            const minRate = parseFloat(document.getElementById('minRateFilter').value) || 0.01;
+
+            try {
+                const response = await fetch(`/api/opportunities?min_rate=${minRate}&limit=30`);
+                const result = await response.json();
+
+                if (result.success) {
+                    renderOpportunities(result.data);
+                } else {
+                    alert('扫描失败: ' + result.error);
+                }
+            } catch (e) {
+                console.error('扫描失败:', e);
+                alert('扫描失败，请检查API配置');
+            }
+        }
+
+        // 渲染套利机会
+        function renderOpportunities(opportunities) {
+            const tbody = document.getElementById('opportunitiesBody');
+
+            if (!opportunities || opportunities.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">未找到符合条件的套利机会</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = opportunities.map(opp => `
+                <tr>
+                    <td><strong>${opp.symbol}</strong></td>
+                    <td>${formatNumber(opp.spot_price)}</td>
+                    <td>${formatNumber(opp.futures_price)}</td>
+                    <td><span class="badge badge-funding">${opp.funding_rate.toFixed(4)}%</span></td>
+                    <td class="positive"><strong>${opp.annualized_rate.toFixed(1)}%</strong></td>
+                    <td class="${opp.premium >= 0 ? 'positive' : 'negative'}">${opp.premium.toFixed(4)}%</td>
+                    <td>
+                        <button class="btn btn-sm btn-primary" onclick="executeTrade('${opp.symbol}')">
+                            <i class="fas fa-play"></i> 开仓
+                        </button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        // 执行套利
+        async function executeTrade(symbol) {
+            if (!confirm(`确定要对 ${symbol} 开仓套利?`)) return;
+
+            try {
+                const response = await fetch('/api/execute', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ symbol })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    alert(`开仓成功! 交易ID: ${result.trade_id}`);
+                    loadPositions();
+                    loadStats();
+                } else {
+                    alert('开仓失败: ' + result.error);
+                }
+            } catch (e) {
+                console.error('开仓失败:', e);
+                alert('开仓失败，请重试');
+            }
+        }
+
+        // 加载持仓
+        async function loadPositions() {
+            try {
+                const response = await fetch('/api/positions');
+                const result = await response.json();
+
+                if (result.success) {
+                    currentPositions = result.data;
+                    renderPositions(result.data);
+                }
+            } catch (e) {
+                console.error('加载持仓失败:', e);
+            }
+        }
+
+        // 渲染持仓
+        function renderPositions(positions) {
+            const tbody = document.getElementById('positionsBody');
+
+            if (!positions || positions.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">暂无持仓</td></tr>';
+                document.getElementById('statPositions').textContent = '0';
+                return;
+            }
+
+            document.getElementById('statPositions').textContent = positions.length;
+
+            tbody.innerHTML = positions.map(pos => {
+                const pnl = pos.unrealized_pnl || 0;
+                const pnlClass = pnl >= 0 ? 'positive' : 'negative';
+                const sideClass = pos.side === 'LONG' ? 'positive' : 'negative';
+
+                return `
+                    <tr>
+                        <td><strong>${pos.symbol}</strong></td>
+                        <td><span class="badge bg-${sideClass === 'positive' ? 'success' : 'danger'}">${pos.side}</span></td>
+                        <td>${formatNumber(pos.quantity)}</td>
+                        <td>${formatNumber(pos.entry_futures_price)}</td>
+                        <td>${formatNumber(pos.current_futures_price)}</td>
+                        <td class="${pnlClass}"><strong>${pnl >= 0 ? '+' : ''}${formatNumber(pnl)}</strong></td>
+                        <td>
+                            <button class="btn btn-sm btn-danger" onclick="closePosition('${pos.symbol}')">
+                                <i class="fas fa-times"></i> 平仓
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        // 平仓
+        async function closePosition(symbol) {
+            if (!confirm(`确定要平掉 ${symbol} 仓位?`)) return;
+
+            try {
+                const response = await fetch(`/api/close/${symbol}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ reason: 'manual' })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    alert('平仓成功');
+                    loadPositions();
+                    loadStats();
+                } else {
+                    alert('平仓失败: ' + result.error);
+                }
+            } catch (e) {
+                console.error('平仓失败:', e);
+                alert('平仓失败，请重试');
+            }
+        }
+
+        // 全部平仓
+        async function closeAllPositions() {
+            if (!confirm('确定要平掉所有仓位?')) return;
+
+            try {
+                const response = await fetch('/api/close-all', { method: 'POST' });
+                const result = await response.json();
+
+                if (result.success) {
+                    alert(result.message);
+                    loadPositions();
+                    loadStats();
+                } else {
+                    alert('平仓失败: ' + result.error);
+                }
+            } catch (e) {
+                console.error('平仓失败:', e);
+                alert('平仓失败，请重试');
+            }
+        }
+
+        // 加载统计数据
+        async function loadStats() {
+            try {
+                const [accountRes, statsRes] = await Promise.all([
+                    fetch('/api/account'),
+                    fetch('/api/trades/stats')
+                ]);
+
+                const account = await accountRes.json();
+                const stats = await statsRes.json();
+
+                if (account.success) {
+                    document.getElementById('statBalance').textContent =
+                        formatNumber(account.data.futures_balance) + ' USDT';
+                    document.getElementById('statPnl').textContent =
+                        (account.data.total_pnl >= 0 ? '+' : '') + formatNumber(account.data.total_pnl);
+                    document.getElementById('statPnl').className =
+                        'stat-value ' + (account.data.total_pnl >= 0 ? 'positive' : 'negative');
+                    document.getElementById('statFunding').textContent =
+                        '+' + formatNumber(account.data.total_funding);
+                    document.getElementById('statWinRate').textContent =
+                        (account.data.win_rate * 100).toFixed(1) + '%';
+
+                    // 更新图表
+                    updateChart(account.data.total_pnl, account.data.total_funding);
+                }
+
+                if (stats.success) {
+                    document.getElementById('statPositions').textContent = stats.data.open_positions;
+                }
+            } catch (e) {
+                console.error('加载统计失败:', e);
+            }
+        }
+
+        // 更新图表
+        function updateChart(pnl, funding) {
+            if (!chart) return;
+
+            const now = new Date().toLocaleTimeString();
+            const option = chart.getOption();
+
+            option.xAxis.data.push(now);
+            option.series[0].data.push(pnl);
+            option.series[1].data.push(funding);
+
+            // 限制数据点数量
+            if (option.xAxis.data.length > 20) {
+                option.xAxis.data.shift();
+                option.series[0].data.shift();
+                option.series[1].data.shift();
+            }
+
+            chart.setOption(option);
+        }
+
+        // 启动引擎
+        async function startEngine() {
+            try {
+                const response = await fetch('/api/engine/start', { method: 'POST' });
+                const result = await response.json();
+
+                if (result.success) {
+                    document.getElementById('startBtn').disabled = true;
+                    document.getElementById('stopBtn').disabled = false;
+                    document.getElementById('statEngine').innerHTML =
+                        '<span class="status-badge status-running"></span> <span>运行中</span>';
+                    alert('套利引擎已启动');
+                } else {
+                    alert('启动失败: ' + result.error);
+                }
+            } catch (e) {
+                console.error('启动失败:', e);
+                alert('启动失败，请重试');
+            }
+        }
+
+        // 停止引擎
+        async function stopEngine() {
+            try {
+                const response = await fetch('/api/engine/stop', { method: 'POST' });
+                const result = await response.json();
+
+                if (result.success) {
+                    document.getElementById('startBtn').disabled = false;
+                    document.getElementById('stopBtn').disabled = true;
+                    document.getElementById('statEngine').innerHTML =
+                        '<span class="status-badge status-stopped"></span> <span>已停止</span>';
+                    alert('套利引擎已停止');
+                } else {
+                    alert('停止失败: ' + result.error);
+                }
+            } catch (e) {
+                console.error('停止失败:', e);
+                alert('停止失败，请重试');
+            }
+        }
+
+        // 加载策略配置
+        async function loadStrategy() {
+            try {
+                const response = await fetch('/api/strategy');
+                const result = await response.json();
+
+                if (result.success) {
+                    const data = result.data;
+                    document.getElementById('strategyMinRate').value = data.min_funding_rate || 0.01;
+                    document.getElementById('strategyMaxSize').value = data.max_position_size || 1000;
+                    document.getElementById('strategyLeverage').value = data.leverage || 3;
+                    document.getElementById('strategyStopLoss').value = data.stop_loss_pct || 2;
+                    document.getElementById('strategyTakeProfit').value = data.take_profit_pct || 5;
+                    document.getElementById('strategyAutoExecute').checked = data.auto_execute || false;
+                }
+            } catch (e) {
+                console.error('加载策略失败:', e);
+            }
+        }
+
+        // 保存策略配置
+        async function saveStrategy() {
+            const strategy = {
+                min_funding_rate: parseFloat(document.getElementById('strategyMinRate').value),
+                max_position_size: parseFloat(document.getElementById('strategyMaxSize').value),
+                leverage: parseInt(document.getElementById('strategyLeverage').value),
+                stop_loss_pct: parseFloat(document.getElementById('strategyStopLoss').value),
+                take_profit_pct: parseFloat(document.getElementById('strategyTakeProfit').value),
+                auto_execute: document.getElementById('strategyAutoExecute').checked
+            };
+
+            try {
+                const response = await fetch('/api/strategy', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(strategy)
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    alert('策略配置已保存');
+                } else {
+                    alert('保存失败: ' + result.error);
+                }
+            } catch (e) {
+                console.error('保存失败:', e);
+                alert('保存失败，请重试');
+            }
+        }
+
+        // 显示设置模态框
+        function showSettingsModal() {
+            const modal = new bootstrap.Modal(document.getElementById('settingsModal'));
+            modal.show();
+        }
+
+        // 保存 API 凭证
+        async function saveCredentials() {
+            const credentials = {
+                futures_api_key: document.getElementById('futuresApiKey').value,
+                futures_secret_key: document.getElementById('futuresSecretKey').value,
+                spot_api_key: document.getElementById('spotApiKey').value,
+                spot_secret_key: document.getElementById('spotSecretKey').value,
+                testnet: document.getElementById('useTestnet').checked
+            };
+
+            if (!credentials.futures_api_key || !credentials.futures_secret_key) {
+                alert('请填写合约 API 凭证');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/credentials', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(credentials)
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    alert('API 凭证已保存');
+                    bootstrap.Modal.getInstance(document.getElementById('settingsModal')).hide();
+                    checkApiStatus();
+                    loadStats();
+                } else {
+                    alert('保存失败: ' + result.error);
+                }
+            } catch (e) {
+                console.error('保存失败:', e);
+                alert('保存失败，请重试');
+            }
+        }
+
+        // 格式化数字
+        function formatNumber(num) {
+            if (num === null || num === undefined) return '--';
+            const n = parseFloat(num);
+            if (isNaN(n)) return '--';
+            if (Math.abs(n) >= 1000) {
+                return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            }
+            return n.toFixed(4);
+        }
+
+        // 定期刷新
+        setInterval(() => {
+            if (document.visibilityState === 'visible') {
+                loadPositions();
+                loadStats();
+            }
+        }, 30000);
+
+        // 页面可见性变化
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                loadPositions();
+                loadStats();
+            }
+        });
+    </script>
+</body>
+</html>
