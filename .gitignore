@@ -34,3 +34,12 @@ Thumbs.db
 
 # WorkBuddy
 .workbuddy/
+
+# SQLite sidecars and local credentials
+/data/
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
+.env.*
+!.env.example

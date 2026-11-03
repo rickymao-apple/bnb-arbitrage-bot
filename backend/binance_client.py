@@ -1,528 +1,165 @@
-"""
-币安 API 客户端模块
-支持现货和永续合约 API
-"""
+"""Binance read-only client; trading stays locked until paired execution is implemented."""
 import asyncio
-import logging
-import time
 import hashlib
+import hmac
+import math
+import threading
+import time
+from datetime import datetime, timezone
+from urllib.parse import urlencode
 import requests
-from typing import Optional, List, Dict, Any
-from datetime import datetime
+from backend.models import ArbitrageOpportunity, BinanceCredentials
 
-try:
-    from binance.client import Client
-except ImportError:
-    Client = None
-
-from backend.models import (
-    ArbitrageOpportunity,
-    BinanceCredentials,
-    AccountInfo,
-    Position
-)
-
-logger = logging.getLogger(__name__)
-
-# API URLs
 FUTURES_URL = "https://fapi.binance.com"
-TESTNET_FUTURES_URL = "https://testnet.binancefuture.com/fapi"
+TESTNET_FUTURES_URL = "https://demo-fapi.binance.com"
+SPOT_URL = "https://api.binance.com"
+TESTNET_SPOT_URL = "https://testnet.binance.vision"
+TRADING_DISABLED = "交易功能已锁定：双腿成交与异常恢复尚未通过验证，请在币安端管理已有仓位。"
 
 
-def get_binance_signature(params: dict, secret_key: str) -> str:
-    """生成签名"""
-    param_str = "&".join([f"{k}={v}" for k, v in params.items()])
-    signature = hashlib.sha256((param_str + secret_key).encode()).hexdigest()
-    return signature
+class BinanceAPIError(RuntimeError):
+    pass
+
+
+def get_binance_signature(params, secret_key):
+    return hmac.new(secret_key.encode(), urlencode(params).encode(), hashlib.sha256).hexdigest()
 
 
 class BinanceFuturesClient:
-    """币安合约客户端（兼容 python-binance 1.0.x）"""
-
-    def __init__(self, api_key: str, secret_key: str, testnet: bool = False):
+    def __init__(self, api_key="", secret_key="", testnet=True):
         self.api_key = api_key
         self.secret_key = secret_key
         self.base_url = TESTNET_FUTURES_URL if testnet else FUTURES_URL
-        self.session = requests.Session()
-        self.session.headers.update({"X-MBX-APIKEY": api_key})
+        self._local = threading.local()
 
-    def _request(self, method: str, endpoint: str, params: dict = None, signed: bool = False) -> dict:
-        """发送请求"""
-        url = f"{self.base_url}{endpoint}"
-        params = params or {}
+    @property
+    def session(self):
+        if not hasattr(self._local, "session"):
+            self._local.session = requests.Session()
+            self._local.session.headers.update({"X-MBX-APIKEY": self.api_key})
+        return self._local.session
 
+    def _request(self, method, endpoint, params=None, signed=False):
+        if method != "GET":
+            raise BinanceAPIError(TRADING_DISABLED)
+        params = dict(params or {})
         if signed:
-            params["timestamp"] = int(time.time() * 1000)
+            if not self.api_key or not self.secret_key:
+                raise BinanceAPIError("请配置只读合约 API 凭证")
+            params.update(timestamp=int(time.time() * 1000), recvWindow=5000)
             params["signature"] = get_binance_signature(params, self.secret_key)
+        try:
+            response = self.session.get(self.base_url + endpoint, params=params, timeout=(5, 15))
+            if response.status_code != 200:
+                raise BinanceAPIError(f"币安请求失败 (HTTP {response.status_code})")
+            return response.json()
+        except (requests.RequestException, ValueError):
+            # Do not expose signed URLs, API keys or response bodies to logs/UI.
+            raise BinanceAPIError("币安请求超时、连接失败或响应无效") from None
 
-        if method == "GET":
-            response = self.session.get(url, params=params)
-        else:
-            response = self.session.post(url, data=params)
+    def get_mark_price(self, symbol):
+        return float(self._request("GET", "/fapi/v1/premiumIndex", {"symbol": symbol})["markPrice"])
 
-        if response.status_code != 200:
-            logger.error(f"API 请求失败: {response.text}")
-            return {}
+    def get_balance(self):
+        data = self._request("GET", "/fapi/v3/balance", signed=True)
+        return next((float(a["availableBalance"]) for a in data if a["asset"] == "USDT"), 0.0)
 
-        return response.json()
+    def get_positions(self):
+        return [p for p in self._request("GET", "/fapi/v3/positionRisk", signed=True)
+                if float(p["positionAmt"]) != 0]
 
-    def get_mark_price(self, symbol: str) -> Optional[float]:
-        """获取标记价格"""
-        data = self._request("GET", "/fapi/v1/premiumIndex", {"symbol": symbol})
-        if data and "markPrice" in data:
-            return float(data["markPrice"])
-        return None
+    def place_order(self, *args, **kwargs):
+        raise BinanceAPIError(TRADING_DISABLED)
 
-    def get_funding_rate(self, symbol: str) -> Optional[Dict[str, Any]]:
-        """获取资金费率"""
-        data = self._request("GET", "/fapi/v1/fundingRate", {
-            "symbol": symbol,
-            "limit": 1
-        })
-        if data and len(data) > 0:
-            return {
-                "funding_rate": float(data[0]["fundingRate"]) * 100,
-                "funding_time": datetime.fromtimestamp(data[0]["fundingTime"] / 1000)
-            }
-        return None
-
-    def get_exchange_info(self) -> List[str]:
-        """获取交易对列表"""
-        data = self._request("GET", "/fapi/v1/exchangeInfo")
-        if data and "symbols" in data:
-            return [
-                s["symbol"] for s in data["symbols"]
-                if s["contractType"] == "PERPETUAL"
-                and s["status"] == "TRADING"
-                and s["quoteAsset"] == "USDT"
-            ]
-        return []
-
-    def get_account(self) -> dict:
-        """获取账户信息"""
-        return self._request("GET", "/fapi/v1/account", signed=True)
-
-    def get_balance(self) -> float:
-        """获取 USDT 余额"""
-        data = self._request("GET", "/fapi/v2/balance", signed=True)
-        if data:
-            for asset in data:
-                if asset["asset"] == "USDT":
-                    return float(asset["availableBalance"])
-        return 0.0
-
-    def get_positions(self) -> List[dict]:
-        """获取持仓"""
-        data = self._request("GET", "/fapi/v2/positionRisk", signed=True)
-        return [
-            p for p in data
-            if float(p["positionAmt"]) != 0
-        ]
-
-    def place_order(self, symbol: str, side: str, order_type: str, quantity: float) -> dict:
-        """下单"""
-        params = {
-            "symbol": symbol,
-            "side": side,
-            "type": order_type,
-            "quantity": quantity
-        }
-        return self._request("POST", "/fapi/v1/order", params, signed=True)
-
-    def set_leverage(self, symbol: str, leverage: int) -> dict:
-        """设置杠杆"""
-        params = {
-            "symbol": symbol,
-            "leverage": leverage
-        }
-        return self._request("POST", "/fapi/v1/leverage", params, signed=True)
+    def set_leverage(self, *args, **kwargs):
+        raise BinanceAPIError(TRADING_DISABLED)
 
 
 class BinanceClient:
-    """币安客户端封装"""
-
-    def __init__(self, credentials: BinanceCredentials):
+    def __init__(self, credentials: BinanceCredentials, enabled_pairs=None):
         self.credentials = credentials
-        self.spot_client: Optional[Client] = None
-        self.futures_client: Optional[BinanceFuturesClient] = None
-        self._testnet = credentials.testnet
+        self.futures_client = BinanceFuturesClient(credentials.futures_api_key,
+                                                  credentials.futures_secret_key, credentials.testnet)
+        self.spot_url = TESTNET_SPOT_URL if credentials.testnet else SPOT_URL
+        self.enabled_pairs = set(enabled_pairs or [])
+        self._metadata = None
+        self._metadata_time = 0.0
+        self._scan_lock = threading.Lock()
 
-        self._initialize_clients()
-
-    def _initialize_clients(self):
-        """初始化客户端"""
+    def _spot(self, path):
         try:
-            # 初始化现货客户端
-            if self.credentials.spot_api_key and self.credentials.spot_secret_key:
-                self.spot_client = Client(
-                    self.credentials.spot_api_key,
-                    self.credentials.spot_secret_key
-                )
+            # Separate session: never send the futures API key to the spot service.
+            response = requests.get(self.spot_url + path, timeout=(5, 15))
+            if response.status_code != 200:
+                raise BinanceAPIError(f"现货行情请求失败 (HTTP {response.status_code})")
+            return response.json()
+        except (requests.RequestException, ValueError):
+            raise BinanceAPIError("现货行情连接失败或响应无效") from None
 
-            # 初始化合约客户端
-            if self.credentials.futures_api_key and self.credentials.futures_secret_key:
-                self.futures_client = BinanceFuturesClient(
-                    self.credentials.futures_api_key,
-                    self.credentials.futures_secret_key,
-                    testnet=self._testnet
-                )
+    def _symbols(self):
+        if self._metadata is not None and time.monotonic() - self._metadata_time < 300:
+            return self._metadata
+        futures = self.futures_client._request("GET", "/fapi/v1/exchangeInfo")["symbols"]
+        spots = {s["symbol"]: s for s in self._spot("/api/v3/exchangeInfo")["symbols"]
+                 if s["status"] == "TRADING" and s.get("isSpotTradingAllowed", False)}
+        # Equal symbols alone are insufficient for multiplier contracts.
+        self._metadata = {s["symbol"] for s in futures
+                          if s["contractType"] == "PERPETUAL" and s["status"] == "TRADING"
+                          and s["quoteAsset"] == "USDT" and s["symbol"] in spots
+                          and s["baseAsset"] == spots[s["symbol"]]["baseAsset"]}
+        self._metadata_time = time.monotonic()
+        return self._metadata
 
-            logger.info("币安客户端初始化完成")
-
-        except Exception as e:
-            logger.error(f"初始化币安客户端失败: {e}")
-            raise
-
-    def is_connected(self) -> bool:
-        """检查连接状态"""
-        try:
-            if self.futures_client:
-                self.futures_client.get_balance()
-                return True
-            return False
-        except:
-            return False
-
-    def get_spot_price(self, symbol: str) -> Optional[float]:
-        """获取现货价格"""
-        try:
-            if self.spot_client:
-                ticker = self.spot_client.get_symbol_ticker(symbol=symbol)
-                return float(ticker["price"])
-            elif self.futures_client:
-                return self.futures_client.get_mark_price(symbol)
-            return None
-        except Exception as e:
-            logger.warning(f"获取现货价格失败 {symbol}: {e}")
-            return None
-
-    def get_futures_price(self, symbol: str) -> Optional[float]:
-        """获取合约价格"""
-        try:
-            if self.futures_client:
-                return self.futures_client.get_mark_price(symbol)
-            return None
-        except Exception as e:
-            logger.warning(f"获取合约价格失败 {symbol}: {e}")
-            return None
-
-    def get_funding_rate(self, symbol: str) -> Optional[Dict[str, Any]]:
-        """获取资金费率"""
-        try:
-            if self.futures_client:
-                return self.futures_client.get_funding_rate(symbol)
-            return None
-        except Exception as e:
-            logger.warning(f"获取资金费率失败 {symbol}: {e}")
-            return None
-
-    def get_premium_index(self, symbol: str) -> Optional[Dict[str, Any]]:
-        """获取溢价指数"""
-        try:
-            if self.futures_client:
-                return self.futures_client.get_funding_rate(symbol)
-            return None
-        except Exception as e:
-            logger.warning(f"获取溢价指数失败 {symbol}: {e}")
-            return None
-
-    async def get_all_perpetual_symbols(self) -> List[str]:
-        """获取所有永续合约"""
-        try:
-            if self.futures_client:
-                return self.futures_client.get_exchange_info()
-            return []
-        except Exception as e:
-            logger.error(f"获取永续合约列表失败: {e}")
-            return []
-
-    async def get_futures_balance(self) -> float:
-        """获取合约余额"""
-        try:
-            if self.futures_client:
-                return self.futures_client.get_balance()
-            return 0.0
-        except Exception as e:
-            logger.error(f"获取合约余额失败: {e}")
-            return 0.0
-
-    def get_account_info(self) -> Optional[AccountInfo]:
-        """获取账户信息"""
-        try:
-            if not self.futures_client:
-                return None
-
-            account = self.futures_client.get_account()
-            balance = self.futures_client.get_balance()
-
-            positions = self.futures_client.get_positions()
-            open_positions = len(positions)
-
-            return AccountInfo(
-                total_balance=balance,
-                available_balance=balance,
-                total_pnl=0.0,
-                daily_pnl=0.0,
-                open_positions=open_positions,
-                total_trades=0,
-                win_rate=0.0
-            )
-        except Exception as e:
-            logger.error(f"获取账户信息失败: {e}")
-            return None
-
-    def get_positions(self) -> List[Position]:
-        """获取当前持仓"""
-        try:
-            if not self.futures_client:
-                return []
-
-            positions = self.futures_client.get_positions()
+    def scan_opportunities_sync(self, min_funding_rate=0.01, max_results=20):
+        with self._scan_lock:
+            symbols = self._symbols()
+            marks = self.futures_client._request("GET", "/fapi/v1/premiumIndex")
+            intervals = {s["symbol"]: int(s["fundingIntervalHours"]) for s in
+                         self.futures_client._request("GET", "/fapi/v1/fundingInfo")}
+            spots = {s["symbol"]: float(s["price"]) for s in self._spot("/api/v3/ticker/price")}
             result = []
-
-            for pos in positions:
-                symbol = pos["symbol"]
-                spot_price = self.get_spot_price(symbol)
-                futures_price = self.get_futures_price(symbol)
-
-                result.append(Position(
-                    symbol=symbol,
-                    side="LONG" if float(pos["positionAmt"]) > 0 else "SHORT",
-                    quantity=abs(float(pos["positionAmt"])),
-                    entry_spot_price=float(pos["entryPrice"]),
-                    entry_futures_price=float(pos["entryPrice"]),
-                    current_spot_price=spot_price or float(pos["entryPrice"]),
-                    current_futures_price=futures_price or float(pos["entryPrice"]),
-                    unrealized_pnl=float(pos["unRealizedProfit"]),
-                    funding_accrued=0.0,
-                    leverage=int(pos["leverage"]),
-                    opened_at=datetime.now()
-                ))
-
-            return result
-        except Exception as e:
-            logger.error(f"获取持仓失败: {e}")
-            return []
-
-    async def scan_opportunities(
-        self,
-        min_funding_rate: float = 0.01,
-        max_results: int = 20
-    ) -> List[ArbitrageOpportunity]:
-        """扫描套利机会"""
-        opportunities = []
-        symbols = await self.get_all_perpetual_symbols()
-
-        for symbol in symbols[:50]:
-            try:
-                spot_price = self.get_spot_price(symbol)
-                futures_price = self.get_futures_price(symbol)
-                funding_info = self.get_funding_rate(symbol)
-
-                if not all([spot_price, futures_price, funding_info]):
+            now = datetime.now(timezone.utc)
+            for mark in marks:
+                symbol = mark["symbol"]
+                if symbol not in symbols or (self.enabled_pairs and symbol not in self.enabled_pairs):
                     continue
+                spot = spots.get(symbol, 0)
+                future = float(mark["markPrice"])
+                rate = float(mark["lastFundingRate"]) * 100
+                hours = intervals.get(symbol, 8)
+                if not all(math.isfinite(n) for n in (spot, future, rate)) or min(spot, future, hours) <= 0:
+                    continue
+                if rate < min_funding_rate:
+                    continue
+                result.append(ArbitrageOpportunity(
+                    symbol=symbol, spot_price=spot, futures_price=future, funding_rate=rate,
+                    annualized_rate=rate * (24 / hours) * 365,
+                    premium=(future / spot - 1) * 100, spread=future - spot,
+                    timestamp=now, funding_interval_hours=hours,
+                    next_funding_time=datetime.fromtimestamp(int(mark["nextFundingTime"]) / 1000, timezone.utc)))
+            return sorted(result, key=lambda o: o.annualized_rate, reverse=True)[:max_results]
 
-                premium = ((futures_price - spot_price) / spot_price) * 100
-                annualized_rate = funding_info["funding_rate"] * 1095 / 100
+    async def scan_opportunities_async(self, min_funding_rate=0.01, max_results=20):
+        return await asyncio.to_thread(self.scan_opportunities_sync, min_funding_rate, max_results)
 
-                if funding_info["funding_rate"] >= min_funding_rate:
-                    opportunities.append(ArbitrageOpportunity(
-                        symbol=symbol,
-                        spot_price=spot_price,
-                        futures_price=futures_price,
-                        funding_rate=funding_info["funding_rate"],
-                        annualized_rate=annualized_rate,
-                        premium=premium,
-                        spread=futures_price - spot_price,
-                        timestamp=datetime.now()
-                    ))
+    async def get_futures_balance(self):
+        return await asyncio.to_thread(self.futures_client.get_balance)
 
-            except Exception as e:
-                logger.debug(f"扫描 {symbol} 失败: {e}")
-                continue
+    def get_positions(self):
+        result = []
+        for p in self.futures_client.get_positions():
+            result.append({"symbol": p["symbol"], "side": "LONG" if float(p["positionAmt"]) > 0 else "SHORT",
+                           "quantity": abs(float(p["positionAmt"])), "entry_futures_price": float(p["entryPrice"]),
+                           "current_futures_price": float(p["markPrice"]), "unrealized_pnl": float(p["unRealizedProfit"]),
+                           "position_side": p.get("positionSide", "BOTH")})
+        return result
 
-        opportunities.sort(key=lambda x: x.annualized_rate, reverse=True)
-        return opportunities[:max_results]
-
-    def place_futures_order(
-        self,
-        symbol: str,
-        side: str,
-        quantity: float,
-        leverage: int = 1
-    ) -> Optional[Dict[str, Any]]:
-        """合约下单"""
-        try:
-            if not self.futures_client:
-                return None
-
-            self.futures_client.set_leverage(symbol, leverage)
-
-            order_side = "BUY" if side == "LONG" else "SELL"
-            order = self.futures_client.place_order(symbol, order_side, "MARKET", quantity)
-
-            return order
-        except Exception as e:
-            logger.error(f"下单失败 {symbol}: {e}")
-            return None
+    def place_futures_order(self, symbol, side, quantity, leverage=1, reduce_only=False):
+        # Validate direction even though this release cannot send orders.
+        if side not in {"BUY", "SELL"}:
+            raise ValueError("订单方向必须是 BUY 或 SELL")
+        raise BinanceAPIError(TRADING_DISABLED)
 
 
-# ============ 异步版本客户端 ============
-
-class AsyncBinanceClient:
-    """异步币安客户端"""
-
-    def __init__(self, credentials: BinanceCredentials):
-        self.credentials = credentials
-        self.spot_client: Optional[Client] = None
-        self.futures_client: Optional[BinanceFuturesClient] = None
-        self._testnet = credentials.testnet
-        self._initialize_clients()
-
-    def _initialize_clients(self):
-        """初始化客户端"""
-        try:
-            if self.credentials.spot_api_key and self.credentials.spot_secret_key:
-                self.spot_client = Client(
-                    self.credentials.spot_api_key,
-                    self.credentials.spot_secret_key
-                )
-
-            if self.credentials.futures_api_key and self.credentials.futures_secret_key:
-                self.futures_client = BinanceFuturesClient(
-                    self.credentials.futures_api_key,
-                    self.credentials.futures_secret_key,
-                    testnet=self._testnet
-                )
-
-            logger.info("异步币安客户端初始化完成")
-        except Exception as e:
-            logger.error(f"初始化异步客户端失败: {e}")
-            raise
-
-    def get_spot_price(self, symbol: str) -> Optional[float]:
-        """获取现货价格"""
-        try:
-            if self.spot_client:
-                ticker = self.spot_client.get_symbol_ticker(symbol=symbol)
-                return float(ticker["price"])
-            elif self.futures_client:
-                return self.futures_client.get_mark_price(symbol)
-            return None
-        except Exception as e:
-            logger.warning(f"获取现货价格失败 {symbol}: {e}")
-            return None
-
-    def get_futures_price(self, symbol: str) -> Optional[float]:
-        """获取合约价格"""
-        try:
-            if self.futures_client:
-                return self.futures_client.get_mark_price(symbol)
-            return None
-        except Exception as e:
-            logger.warning(f"获取合约价格失败 {symbol}: {e}")
-            return None
-
-    def get_funding_rate(self, symbol: str) -> Optional[Dict[str, Any]]:
-        """获取资金费率"""
-        try:
-            if self.futures_client:
-                return self.futures_client.get_funding_rate(symbol)
-            return None
-        except Exception as e:
-            logger.warning(f"获取资金费率失败 {symbol}: {e}")
-            return None
-
-    async def get_spot_price_async(self, symbol: str) -> Optional[float]:
-        """异步获取现货价格"""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self.get_spot_price, symbol)
-
-    async def get_futures_price_async(self, symbol: str) -> Optional[float]:
-        """异步获取合约价格"""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self.get_futures_price, symbol)
-
-    async def get_funding_rate_async(self, symbol: str) -> Optional[Dict[str, Any]]:
-        """异步获取资金费率"""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self.get_funding_rate, symbol)
-
-    async def get_all_perpetual_symbols_async(self) -> List[str]:
-        """异步获取所有永续合约"""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._get_all_perpetual_symbols_sync)
-
-    def _get_all_perpetual_symbols_sync(self) -> List[str]:
-        """同步获取所有永续合约"""
-        try:
-            if self.futures_client:
-                return self.futures_client.get_exchange_info()
-            return []
-        except Exception as e:
-            logger.error(f"获取永续合约列表失败: {e}")
-            return []
-
-    async def scan_opportunities_async(
-        self,
-        min_funding_rate: float = 0.01,
-        max_results: int = 20
-    ) -> List[ArbitrageOpportunity]:
-        """异步扫描套利机会"""
-        loop = asyncio.get_event_loop()
-
-        symbols = await self.get_all_perpetual_symbols_async()
-        opportunities = []
-
-        batch_size = 10
-        for i in range(0, min(len(symbols), 50), batch_size):
-            batch = symbols[i:i + batch_size]
-            tasks = []
-
-            for symbol in batch:
-                tasks.append(self._scan_single_symbol(symbol, min_funding_rate))
-
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-
-            for result in results:
-                if isinstance(result, ArbitrageOpportunity):
-                    opportunities.append(result)
-
-        opportunities.sort(key=lambda x: x.annualized_rate, reverse=True)
-        return opportunities[:max_results]
-
-    async def _scan_single_symbol(
-        self,
-        symbol: str,
-        min_funding_rate: float
-    ) -> Optional[ArbitrageOpportunity]:
-        """扫描单个交易对"""
-        try:
-            spot_price, futures_price, funding_info = await asyncio.gather(
-                self.get_spot_price_async(symbol),
-                self.get_futures_price_async(symbol),
-                self.get_funding_rate_async(symbol)
-            )
-
-            if not all([spot_price, futures_price, funding_info]):
-                return None
-
-            premium = ((futures_price - spot_price) / spot_price) * 100
-            annualized_rate = funding_info["funding_rate"] * 1095 / 100
-
-            if funding_info["funding_rate"] >= min_funding_rate:
-                return ArbitrageOpportunity(
-                    symbol=symbol,
-                    spot_price=spot_price,
-                    futures_price=futures_price,
-                    funding_rate=funding_info["funding_rate"],
-                    annualized_rate=annualized_rate,
-                    premium=premium,
-                    spread=futures_price - spot_price,
-                    timestamp=datetime.now()
-                )
-
-            return None
-        except Exception as e:
-            logger.debug(f"扫描 {symbol} 失败: {e}")
-            return None
+# Keep the import name compatible, using one implementation for both modes.
+AsyncBinanceClient = BinanceClient

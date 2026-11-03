@@ -1,52 +1,28 @@
-# 币安套利机器人配置
-# 请勿将敏感信息提交到版本控制！
-
+# 监控模式：此版本不支持开仓、平仓、自动执行或自动止盈止损。
 [binance]
-# 现货 API 配置（可选，留空则使用永续合约账户）
-spot_api_key = ""
-spot_secret_key = ""
-
-# 永续合约 API 配置
-futures_api_key = ""
-futures_secret_key = ""
-
-# API 权限设置（建议只开启合约交易和读取权限）
-# 可用权限: spot, margin, futures, option
+# 扫描公开行情无需凭证；余额与持仓查询只需要只读权限。
+futures_api_key =
+futures_secret_key =
+spot_api_key =
+spot_secret_key =
+testnet = true
 
 [trading]
-# 交易对过滤
+# 为空时扫描全部匹配的合约与现货，也可用 BTCUSDT,ETHUSDT。
 enabled_pairs = []
-
-# 最小资金费率阈值（%），只有超过此值才触发套利
 min_funding_rate = 0.01
-
-# 单笔最大交易金额 (USDT)
+# 以下交易参数仅保留兼容，不触发交易。
 max_trade_amount = 1000
-
-# 初始保证金比例
 leverage = 3
-
-# 是否自动执行交易（True=自动执行，False=仅监控）
 auto_execute = false
 
 [monitoring]
-# 数据刷新间隔（秒）
-refresh_interval = 5
-
-# 是否启用 TG 通知（待实现）
-telegram_enabled = false
-telegram_token = ""
-telegram_chat_id = ""
+refresh_interval = 30
 
 [database]
-# SQLite 数据库路径
 db_path = ./data/arbitrage.db
 
 [server]
-# Web 服务端口
+host = 127.0.0.1
 port = 5000
-debug = true
-
-[logging]
-log_level = INFO
-log_file = ./logs/arbitrage.log
+debug = false
