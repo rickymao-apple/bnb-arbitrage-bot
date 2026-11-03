@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BNB 永续合约套利机器人</title>
+    <title>币安资金费率监控面板</title>
 
     <!-- Bootstrap CSS -->
     <link href="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css" rel="stylesheet">
@@ -226,7 +226,7 @@
         <div class="container-fluid">
             <a class="navbar-brand" href="#">
                 <i class="fas fa-robot me-2"></i>
-                BNB 永续合约套利机器人
+                币安资金费率监控面板
             </a>
             <div class="d-flex align-items-center">
                 <div class="api-status me-3">
@@ -242,6 +242,12 @@
 
     <!-- 主内容 -->
     <div class="container-fluid py-4">
+        <div class="alert alert-warning">本版本仅监控，不开仓、不平仓、不执行止盈止损。已有仓位请在币安端管理。年化为当前资金费率的简单外推，未扣交易成本，不代表预期收益。</div>
+        <div class="alert alert-info">行情扫描无需密钥。查询真实持仓和余额时仅需只读 API；网页提交的凭证只保留到服务重启。旧版数据库交易收益未核对，本版不展示为实际收益。</div>
+        <div class="input-group mb-3">
+            <input id="dashboardToken" type="password" class="form-control" autocomplete="off" placeholder="输入启动终端显示的面板访问口令">
+            <button class="btn btn-primary" onclick="unlockDashboard()">连接面板</button>
+        </div>
         <!-- 统计卡片 -->
         <div class="row mb-4">
             <div class="col-md-2">
@@ -309,7 +315,7 @@
                                     <th>现货价格</th>
                                     <th>合约价格</th>
                                     <th>资金费率</th>
-                                    <th>年化收益</th>
+                                    <th>参考年化</th>
                                     <th>溢价</th>
                                     <th>操作</th>
                                 </tr>
@@ -329,7 +335,7 @@
                 <div class="card mb-4">
                     <div class="card-header d-flex justify-content-between align-items-center">
                         <span><i class="fas fa-wallet me-2"></i>当前持仓</span>
-                        <button class="btn btn-sm btn-danger" onclick="closeAllPositions()">
+                        <button class="btn btn-sm btn-danger" disabled title="请到币安端管理仓位">
                             <i class="fas fa-times me-1"></i>全部平仓
                         </button>
                     </div>
@@ -349,7 +355,7 @@
                             <tbody id="positionsBody">
                                 <tr>
                                     <td colspan="7" class="text-center text-muted">
-                                        暂无持仓
+                                        尚未查询真实持仓
                                     </td>
                                 </tr>
                             </tbody>
@@ -368,10 +374,10 @@
                     <div class="card-body">
                         <div class="d-grid gap-2 mb-3">
                             <button class="btn btn-success" id="startBtn" onclick="startEngine()">
-                                <i class="fas fa-play me-2"></i>启动套利引擎
+                                <i class="fas fa-play me-2"></i>启动监控
                             </button>
                             <button class="btn btn-danger" id="stopBtn" onclick="stopEngine()" disabled>
-                                <i class="fas fa-stop me-2"></i>停止套利引擎
+                                <i class="fas fa-stop me-2"></i>停止监控
                             </button>
                         </div>
                         <button class="btn btn-primary w-100" onclick="scanOpportunities()">
@@ -393,12 +399,12 @@
                         </div>
                         <div class="mb-3">
                             <label class="form-label">最大持仓金额 (USDT)</label>
-                            <input type="number" class="form-control" id="strategyMaxSize"
+                            <input type="number" class="form-control" id="strategyMaxSize" disabled
                                    value="1000" step="100" min="50">
                         </div>
                         <div class="mb-3">
                             <label class="form-label">杠杆倍数</label>
-                            <select class="form-select" id="strategyLeverage">
+                            <select class="form-select" id="strategyLeverage" disabled>
                                 <option value="1">1x</option>
                                 <option value="2">2x</option>
                                 <option value="3" selected>3x</option>
@@ -408,18 +414,18 @@
                         </div>
                         <div class="mb-3">
                             <label class="form-label">止损比例 (%)</label>
-                            <input type="number" class="form-control" id="strategyStopLoss"
+                            <input type="number" class="form-control" id="strategyStopLoss" disabled
                                    value="2" step="0.5" min="0">
                         </div>
                         <div class="mb-3">
                             <label class="form-label">止盈比例 (%)</label>
-                            <input type="number" class="form-control" id="strategyTakeProfit"
+                            <input type="number" class="form-control" id="strategyTakeProfit" disabled
                                    value="5" step="0.5" min="0">
                         </div>
                         <div class="form-check mb-3">
-                            <input class="form-check-input" type="checkbox" id="strategyAutoExecute">
+                            <input class="form-check-input" type="checkbox" id="strategyAutoExecute" disabled>
                             <label class="form-check-label" for="strategyAutoExecute">
-                                自动执行套利
+                                自动执行（本版禁用）
                             </label>
                         </div>
                         <button class="btn btn-outline-light w-100" onclick="saveStrategy()">
@@ -431,7 +437,7 @@
                 <!-- 收益图表 -->
                 <div class="card">
                     <div class="card-header">
-                        <i class="fas fa-chart-area me-2"></i>收益统计
+                        <i class="fas fa-chart-area me-2"></i>收益统计（待成交与费用核对后启用）
                     </div>
                     <div class="card-body">
                         <div id="chart"></div>
@@ -456,11 +462,11 @@
                         <i class="fas fa-info-circle me-2"></i>
                         请到 <a href="https://www.binance.com/zh-CN/my/settings/api-management"
                                target="_blank" class="alert-link">币安官网</a> 创建 API 密钥，
-                        并开启「允许合约交易」权限。
+                        仅开启读取权限；无需开启交易或提现权限。
                     </div>
 
                     <div class="form-check mb-3">
-                        <input class="form-check-input" type="checkbox" id="useTestnet">
+                        <input class="form-check-input" type="checkbox" id="useTestnet" checked>
                         <label class="form-check-label" for="useTestnet">
                             使用测试网 (Testnet)
                         </label>
@@ -468,7 +474,7 @@
 
                     <div class="mb-4">
                         <h6 class="text-primary mb-3">
-                            <i class="fas fa-exchange-alt me-2"></i>合约 API (必填)
+                            <i class="fas fa-exchange-alt me-2"></i>合约 API（仅查询余额和持仓时需要）
                         </h6>
                         <div class="mb-3">
                             <label class="form-label">API Key</label>
@@ -489,7 +495,7 @@
                         <div class="mb-3">
                             <label class="form-label">API Key</label>
                             <input type="text" class="form-control" id="spotApiKey"
-                                   placeholder="请输入现货 API Key (留空使用合约账户)">
+                                   placeholder="公开现货行情不需要密钥">
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Secret Key</label>
@@ -512,6 +518,20 @@
     <script src="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/js/bootstrap.bundle.min.js"></script>
 
     <script>
+        let dashboardToken = '';
+        async function apiFetch(url, options = {}) {
+            const headers = new Headers(options.headers || {});
+            if (dashboardToken) headers.set('Authorization', 'Bearer ' + dashboardToken);
+            return window.fetch(url, {...options, headers});
+        }
+        function unlockDashboard() {
+            dashboardToken = document.getElementById('dashboardToken').value.trim();
+            document.getElementById('dashboardToken').value = '';
+            checkApiStatus(); loadStrategy(); loadStats(); loadPositions();
+        }
+        function escapeHtml(value) {
+            return String(value).replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
+        }
         // 全局变量
         let chart = null;
         let refreshTimer = null;
@@ -520,13 +540,12 @@
         // 初始化
         document.addEventListener('DOMContentLoaded', function() {
             initChart();
-            checkApiStatus();
-            loadStrategy();
-            loadStats();
+
         });
 
         // 初始化图表
         function initChart() {
+            if (!window.echarts) return;
             chart = echarts.init(document.getElementById('chart'));
             const option = {
                 tooltip: {
@@ -579,7 +598,7 @@
         // 检查 API 状态
         async function checkApiStatus() {
             try {
-                const response = await fetch('/api/status');
+                const response = await apiFetch('/api/status');
                 const result = await response.json();
 
                 if (result.success) {
@@ -589,11 +608,12 @@
                     document.getElementById('apiStatusBadge').className =
                         'status-badge ' + (isConfigured ? 'status-running' : 'status-stopped');
                     document.getElementById('apiStatusText').textContent =
-                        isConfigured ? '已连接' : '未连接';
+                        '面板已连接 · ' + (data.testnet ? '测试网' : '主网') + (isConfigured ? ' · 凭证已填' : ' · 公开行情') + (data.last_error ? ' · 扫描失败，请检查连接' : '');
 
-                    if (!isConfigured) {
-                        showSettingsModal();
-                    }
+                    document.getElementById('startBtn').disabled = data.engine_running;
+                    document.getElementById('stopBtn').disabled = !data.engine_running;
+                } else {
+                    document.getElementById('apiStatusText').textContent = result.error || '连接失败';
                 }
             } catch (e) {
                 console.error('检查API状态失败:', e);
@@ -602,16 +622,16 @@
 
         // 扫描套利机会
         async function scanOpportunities() {
-            const minRate = parseFloat(document.getElementById('minRateFilter').value) || 0.01;
+            const minRate = parseFloat(document.getElementById('minRateFilter').value) ?? 0.01;
 
             try {
-                const response = await fetch(`/api/opportunities?min_rate=${minRate}&limit=30`);
+                const response = await apiFetch(`/api/opportunities?min_rate=${minRate}&limit=30`);
                 const result = await response.json();
 
                 if (result.success) {
                     renderOpportunities(result.data);
                 } else {
-                    alert('扫描失败: ' + result.error);
+                    alert('扫描失败: ' + (result.error || result.message));
                 }
             } catch (e) {
                 console.error('扫描失败:', e);
@@ -630,59 +650,36 @@
 
             tbody.innerHTML = opportunities.map(opp => `
                 <tr>
-                    <td><strong>${opp.symbol}</strong></td>
+                    <td><strong>${escapeHtml(opp.symbol)}</strong></td>
                     <td>${formatNumber(opp.spot_price)}</td>
                     <td>${formatNumber(opp.futures_price)}</td>
                     <td><span class="badge badge-funding">${opp.funding_rate.toFixed(4)}%</span></td>
                     <td class="positive"><strong>${opp.annualized_rate.toFixed(1)}%</strong></td>
                     <td class="${opp.premium >= 0 ? 'positive' : 'negative'}">${opp.premium.toFixed(4)}%</td>
                     <td>
-                        <button class="btn btn-sm btn-primary" onclick="executeTrade('${opp.symbol}')">
-                            <i class="fas fa-play"></i> 开仓
-                        </button>
+                        <span class="text-muted">仅监控</span>
                     </td>
                 </tr>
             `).join('');
         }
 
-        // 执行套利
-        async function executeTrade(symbol) {
-            if (!confirm(`确定要对 ${symbol} 开仓套利?`)) return;
-
-            try {
-                const response = await fetch('/api/execute', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ symbol })
-                });
-
-                const result = await response.json();
-
-                if (result.success) {
-                    alert(`开仓成功! 交易ID: ${result.trade_id}`);
-                    loadPositions();
-                    loadStats();
-                } else {
-                    alert('开仓失败: ' + result.error);
-                }
-            } catch (e) {
-                console.error('开仓失败:', e);
-                alert('开仓失败，请重试');
-            }
-        }
-
         // 加载持仓
         async function loadPositions() {
             try {
-                const response = await fetch('/api/positions');
+                const response = await apiFetch('/api/positions');
                 const result = await response.json();
 
                 if (result.success) {
                     currentPositions = result.data;
                     renderPositions(result.data);
+                } else {
+                    document.getElementById('positionsBody').innerHTML = '<tr><td colspan="7">' + escapeHtml(result.error || '持仓查询失败') + '</td></tr>';
+                    document.getElementById('statPositions').textContent = '--';
                 }
             } catch (e) {
                 console.error('加载持仓失败:', e);
+                document.getElementById('positionsBody').innerHTML = '<tr><td colspan="7">持仓查询失败，请重试</td></tr>';
+                document.getElementById('statPositions').textContent = '--';
             }
         }
 
@@ -699,22 +696,20 @@
             document.getElementById('statPositions').textContent = positions.length;
 
             tbody.innerHTML = positions.map(pos => {
-                const pnl = pos.unrealized_pnl || 0;
+                const pnl = pos.unrealized_pnl;
                 const pnlClass = pnl >= 0 ? 'positive' : 'negative';
                 const sideClass = pos.side === 'LONG' ? 'positive' : 'negative';
 
                 return `
                     <tr>
-                        <td><strong>${pos.symbol}</strong></td>
-                        <td><span class="badge bg-${sideClass === 'positive' ? 'success' : 'danger'}">${pos.side}</span></td>
+                        <td><strong>${escapeHtml(pos.symbol)}</strong></td>
+                        <td><span class="badge bg-${sideClass === 'positive' ? 'success' : 'danger'}">${escapeHtml(pos.side)}</span></td>
                         <td>${formatNumber(pos.quantity)}</td>
                         <td>${formatNumber(pos.entry_futures_price)}</td>
                         <td>${formatNumber(pos.current_futures_price)}</td>
                         <td class="${pnlClass}"><strong>${pnl >= 0 ? '+' : ''}${formatNumber(pnl)}</strong></td>
                         <td>
-                            <button class="btn btn-sm btn-danger" onclick="closePosition('${pos.symbol}')">
-                                <i class="fas fa-times"></i> 平仓
-                            </button>
+                            <span class="text-muted">请到币安管理</span>
                         </td>
                     </tr>
                 `;
@@ -726,7 +721,7 @@
             if (!confirm(`确定要平掉 ${symbol} 仓位?`)) return;
 
             try {
-                const response = await fetch(`/api/close/${symbol}`, {
+                const response = await apiFetch(`/api/close/${symbol}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ reason: 'manual' })
@@ -739,7 +734,7 @@
                     loadPositions();
                     loadStats();
                 } else {
-                    alert('平仓失败: ' + result.error);
+                    alert('平仓失败: ' + (result.error || result.message));
                 }
             } catch (e) {
                 console.error('平仓失败:', e);
@@ -752,7 +747,7 @@
             if (!confirm('确定要平掉所有仓位?')) return;
 
             try {
-                const response = await fetch('/api/close-all', { method: 'POST' });
+                const response = await apiFetch('/api/close-all', { method: 'POST' });
                 const result = await response.json();
 
                 if (result.success) {
@@ -760,7 +755,7 @@
                     loadPositions();
                     loadStats();
                 } else {
-                    alert('平仓失败: ' + result.error);
+                    alert('平仓失败: ' + (result.error || result.message));
                 }
             } catch (e) {
                 console.error('平仓失败:', e);
@@ -772,8 +767,8 @@
         async function loadStats() {
             try {
                 const [accountRes, statsRes] = await Promise.all([
-                    fetch('/api/account'),
-                    fetch('/api/trades/stats')
+                    apiFetch('/api/account'),
+                    apiFetch('/api/trades/stats')
                 ]);
 
                 const account = await accountRes.json();
@@ -783,21 +778,19 @@
                     document.getElementById('statBalance').textContent =
                         formatNumber(account.data.futures_balance) + ' USDT';
                     document.getElementById('statPnl').textContent =
-                        (account.data.total_pnl >= 0 ? '+' : '') + formatNumber(account.data.total_pnl);
+                        formatNumber(account.data.total_pnl);
                     document.getElementById('statPnl').className =
                         'stat-value ' + (account.data.total_pnl >= 0 ? 'positive' : 'negative');
                     document.getElementById('statFunding').textContent =
-                        '+' + formatNumber(account.data.total_funding);
+                        formatNumber(account.data.total_funding);
                     document.getElementById('statWinRate').textContent =
-                        (account.data.win_rate * 100).toFixed(1) + '%';
+                        account.data.win_rate == null ? '--' : (account.data.win_rate * 100).toFixed(1) + '%';
 
-                    // 更新图表
-                    updateChart(account.data.total_pnl, account.data.total_funding);
+                } else {
+                    document.getElementById('statBalance').textContent = '--';
                 }
 
-                if (stats.success) {
-                    document.getElementById('statPositions').textContent = stats.data.open_positions;
-                }
+
             } catch (e) {
                 console.error('加载统计失败:', e);
             }
@@ -827,7 +820,7 @@
         // 启动引擎
         async function startEngine() {
             try {
-                const response = await fetch('/api/engine/start', { method: 'POST' });
+                const response = await apiFetch('/api/engine/start', { method: 'POST' });
                 const result = await response.json();
 
                 if (result.success) {
@@ -837,7 +830,7 @@
                         '<span class="status-badge status-running"></span> <span>运行中</span>';
                     alert('套利引擎已启动');
                 } else {
-                    alert('启动失败: ' + result.error);
+                    alert('启动失败: ' + (result.error || result.message));
                 }
             } catch (e) {
                 console.error('启动失败:', e);
@@ -848,7 +841,7 @@
         // 停止引擎
         async function stopEngine() {
             try {
-                const response = await fetch('/api/engine/stop', { method: 'POST' });
+                const response = await apiFetch('/api/engine/stop', { method: 'POST' });
                 const result = await response.json();
 
                 if (result.success) {
@@ -858,7 +851,7 @@
                         '<span class="status-badge status-stopped"></span> <span>已停止</span>';
                     alert('套利引擎已停止');
                 } else {
-                    alert('停止失败: ' + result.error);
+                    alert('停止失败: ' + (result.error || result.message));
                 }
             } catch (e) {
                 console.error('停止失败:', e);
@@ -869,13 +862,13 @@
         // 加载策略配置
         async function loadStrategy() {
             try {
-                const response = await fetch('/api/strategy');
+                const response = await apiFetch('/api/strategy');
                 const result = await response.json();
 
                 if (result.success) {
                     const data = result.data;
-                    document.getElementById('strategyMinRate').value = data.min_funding_rate || 0.01;
-                    document.getElementById('strategyMaxSize').value = data.max_position_size || 1000;
+                    document.getElementById('strategyMinRate').value = data.min_funding_rate ?? 0.01;
+                    document.getElementById('strategyMaxSize').value = data.max_position_size ?? 1000;
                     document.getElementById('strategyLeverage').value = data.leverage || 3;
                     document.getElementById('strategyStopLoss').value = data.stop_loss_pct || 2;
                     document.getElementById('strategyTakeProfit').value = data.take_profit_pct || 5;
@@ -898,7 +891,7 @@
             };
 
             try {
-                const response = await fetch('/api/strategy', {
+                const response = await apiFetch('/api/strategy', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(strategy)
@@ -907,9 +900,9 @@
                 const result = await response.json();
 
                 if (result.success) {
-                    alert('策略配置已保存');
+                    alert(result.message);
                 } else {
-                    alert('保存失败: ' + result.error);
+                    alert('保存失败: ' + (result.error || result.message));
                 }
             } catch (e) {
                 console.error('保存失败:', e);
@@ -933,13 +926,13 @@
                 testnet: document.getElementById('useTestnet').checked
             };
 
-            if (!credentials.futures_api_key || !credentials.futures_secret_key) {
+            if (Boolean(credentials.futures_api_key) !== Boolean(credentials.futures_secret_key)) {
                 alert('请填写合约 API 凭证');
                 return;
             }
 
             try {
-                const response = await fetch('/api/credentials', {
+                const response = await apiFetch('/api/credentials', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(credentials)
@@ -948,12 +941,13 @@
                 const result = await response.json();
 
                 if (result.success) {
-                    alert('API 凭证已保存');
+                    alert(result.message);
+                    for (const id of ['futuresApiKey', 'futuresSecretKey', 'spotApiKey', 'spotSecretKey']) document.getElementById(id).value = '';
                     bootstrap.Modal.getInstance(document.getElementById('settingsModal')).hide();
                     checkApiStatus();
                     loadStats();
                 } else {
-                    alert('保存失败: ' + result.error);
+                    alert('保存失败: ' + (result.error || result.message));
                 }
             } catch (e) {
                 console.error('保存失败:', e);
@@ -974,7 +968,8 @@
 
         // 定期刷新
         setInterval(() => {
-            if (document.visibilityState === 'visible') {
+            if (dashboardToken && document.visibilityState === 'visible') {
+                checkApiStatus();
                 loadPositions();
                 loadStats();
             }
@@ -982,7 +977,8 @@
 
         // 页面可见性变化
         document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible') {
+            if (dashboardToken && document.visibilityState === 'visible') {
+                checkApiStatus();
                 loadPositions();
                 loadStats();
             }
