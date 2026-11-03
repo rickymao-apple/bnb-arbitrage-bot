@@ -1,134 +1,77 @@
-"""
-配置管理模块
-"""
-import os
+"""Validated configuration. Environment variables override the selected INI file."""
 import configparser
+import json
+import os
 from pathlib import Path
-from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from dotenv import load_dotenv
 
-load_dotenv()
+
+class Settings(BaseModel):
+    model_config = ConfigDict(validate_assignment=True, extra="forbid", allow_inf_nan=False)
 
 
-class BinanceConfig(BaseModel):
-    """币安 API 配置"""
+class BinanceConfig(Settings):
     spot_api_key: str = ""
     spot_secret_key: str = ""
     futures_api_key: str = ""
     futures_secret_key: str = ""
+    testnet: bool = True
 
 
-class TradingConfig(BaseModel):
-    """交易配置"""
-    enabled_pairs: list[str] = []
-    min_funding_rate: float = 0.01
-    max_trade_amount: float = 1000.0
-    leverage: int = 3
+class TradingConfig(Settings):
+    enabled_pairs: list[str] = Field(default_factory=list)
+    min_funding_rate: float = Field(default=0.01, ge=0, le=100)
+    max_trade_amount: float = Field(default=1000, ge=50)
+    leverage: int = Field(default=3, ge=1, le=125)
     auto_execute: bool = False
 
 
-class MonitoringConfig(BaseModel):
-    """监控配置"""
-    refresh_interval: int = 5
+class MonitoringConfig(Settings):
+    refresh_interval: int = Field(default=30, ge=5, le=3600)
 
 
-class DatabaseConfig(BaseModel):
-    """数据库配置"""
+class DatabaseConfig(Settings):
     db_path: str = "./data/arbitrage.db"
 
 
-class ServerConfig(BaseModel):
-    """服务器配置"""
-    host: str = "0.0.0.0"
-    port: int = 5000
-    debug: bool = True
+class ServerConfig(Settings):
+    host: str = "127.0.0.1"
+    port: int = Field(default=5000, ge=1, le=65535)
+    debug: bool = False
 
 
-class LoggingConfig(BaseModel):
-    """日志配置"""
-    log_level: str = "INFO"
-    log_file: str = "./logs/arbitrage.log"
-
-
-class AppConfig(BaseModel):
-    """全局配置"""
+class AppConfig(Settings):
     binance: BinanceConfig = Field(default_factory=BinanceConfig)
     trading: TradingConfig = Field(default_factory=TradingConfig)
     monitoring: MonitoringConfig = Field(default_factory=MonitoringConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
-    logging: LoggingConfig = Field(default_factory=LoggingConfig)
 
 
-def load_config(config_path: str = "config.ini") -> AppConfig:
-    """从配置文件加载配置"""
-    config_parser = configparser.ConfigParser()
-
-    if not os.path.exists(config_path):
-        return AppConfig(
-            binance=BinanceConfig(
-                spot_api_key=os.getenv("BINANCE_SPOT_API_KEY", ""),
-                spot_secret_key=os.getenv("BINANCE_SPOT_SECRET_KEY", ""),
-                futures_api_key=os.getenv("BINANCE_FUTURES_API_KEY", ""),
-                futures_secret_key=os.getenv("BINANCE_FUTURES_SECRET_KEY", ""),
-            ),
-            trading=TradingConfig(
-                enabled_pairs=os.getenv("ENABLED_PAIRS", "").split(",") if os.getenv("ENABLED_PAIRS") else [],
-                min_funding_rate=float(os.getenv("MIN_FUNDING_RATE", "0.01")),
-                max_trade_amount=float(os.getenv("MAX_TRADE_AMOUNT", "1000")),
-                leverage=int(os.getenv("LEVERAGE", "3")),
-                auto_execute=os.getenv("AUTO_EXECUTE", "false").lower() == "true",
-            ),
-            monitoring=MonitoringConfig(
-                refresh_interval=int(os.getenv("REFRESH_INTERVAL", "5")),
-            ),
-            database=DatabaseConfig(
-                db_path=os.getenv("DB_PATH", "./data/arbitrage.db"),
-            ),
-            server=ServerConfig(
-                host=os.getenv("HOST", "0.0.0.0"),
-                port=int(os.getenv("PORT", "5000")),
-                debug=os.getenv("DEBUG", "true").lower() == "true",
-            ),
-            logging=LoggingConfig(
-                log_level=os.getenv("LOG_LEVEL", "INFO"),
-                log_file=os.getenv("LOG_FILE", "./logs/arbitrage.log"),
-            ),
-        )
-
-    config_parser.read(config_path)
-
-    return AppConfig(
-        binance=BinanceConfig(
-            spot_api_key=config_parser.get("binance", "spot_api_key", fallback=""),
-            spot_secret_key=config_parser.get("binance", "spot_secret_key", fallback=""),
-            futures_api_key=config_parser.get("binance", "futures_api_key", fallback=""),
-            futures_secret_key=config_parser.get("binance", "futures_secret_key", fallback=""),
-        ),
-        trading=TradingConfig(
-            enabled_pairs=config_parser.get("trading", "enabled_pairs", fallback="").split(",") if config_parser.get("trading", "enabled_pairs", fallback="") else [],
-            min_funding_rate=float(config_parser.get("trading", "min_funding_rate", fallback="0.01")),
-            max_trade_amount=float(config_parser.get("trading", "max_trade_amount", fallback="1000")),
-            leverage=int(config_parser.get("trading", "leverage", fallback="3")),
-            auto_execute=config_parser.get("trading", "auto_execute", fallback="false").lower() == "true",
-        ),
-        monitoring=MonitoringConfig(
-            refresh_interval=int(config_parser.get("monitoring", "refresh_interval", fallback="5")),
-        ),
-        database=DatabaseConfig(
-            db_path=config_parser.get("database", "db_path", fallback="./data/arbitrage.db"),
-        ),
-        server=ServerConfig(
-            host=config_parser.get("server", "host", fallback="0.0.0.0"),
-            port=int(config_parser.get("server", "port", fallback="5000")),
-            debug=config_parser.get("server", "debug", fallback="true").lower() == "true",
-        ),
-        logging=LoggingConfig(
-            log_level=config_parser.get("logging", "log_level", fallback="INFO"),
-            log_file=config_parser.get("logging", "log_file", fallback="./logs/arbitrage.log"),
-        ),
-    )
-
-
-config = load_config()
+def load_config(config_path=None):
+    path = Path(config_path or os.getenv("CONFIG_PATH", "config.ini")).expanduser().resolve()
+    load_dotenv(path.parent / ".env", override=False)
+    parser = configparser.ConfigParser(inline_comment_prefixes=("#", ";"), interpolation=None)
+    parser.read(path)
+    sections = {}
+    models = {"binance": BinanceConfig, "trading": TradingConfig,
+              "monitoring": MonitoringConfig, "database": DatabaseConfig, "server": ServerConfig}
+    for section, model in models.items():
+        values = {}
+        for key in model.model_fields:
+            env = ("BINANCE_" + key.upper()) if section == "binance" else key.upper()
+            # Preserve the existing HOST/PORT/DEBUG/DB_PATH environment names.
+            raw = os.getenv(env, parser.get(section, key, fallback=None))
+            if raw is None:
+                continue
+            raw = raw.strip().strip('"').strip("'")
+            if key == "enabled_pairs":
+                raw = json.loads(raw) if raw.startswith("[") else [s.strip().upper() for s in raw.split(",") if s.strip()]
+            values[key] = raw
+        sections[section] = model(**values)
+    cfg = AppConfig(**sections)
+    db_path = Path(cfg.database.db_path)
+    if not db_path.is_absolute():
+        cfg.database.db_path = str(path.parent / db_path)
+    return cfg

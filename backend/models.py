@@ -2,10 +2,10 @@
 数据模型定义
 """
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Literal
 from pydantic import BaseModel, Field
 from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, Text, JSON
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import declarative_base
 from sqlalchemy.sql import func
 
 Base = declarative_base()
@@ -22,6 +22,8 @@ class ArbitrageOpportunity(BaseModel):
     spread: float  # 价差
     timestamp: datetime = Field(default_factory=datetime.now)
     confidence: float = 1.0  # 置信度
+    funding_interval_hours: int = 8
+    next_funding_time: Optional[datetime] = None
 
 
 class Trade(BaseModel):
@@ -75,18 +77,19 @@ class BinanceCredentials(BaseModel):
     spot_secret_key: str = ""
     futures_api_key: str = ""
     futures_secret_key: str = ""
-    testnet: bool = False  # 是否使用测试网
+    testnet: bool = True  # 是否使用测试网
 
 
 class StrategyConfig(BaseModel):
-    """策略配置"""
-    min_funding_rate: float = 0.01
-    max_positions: int = 5
-    max_position_size: float = 1000.0
-    leverage: int = 3
-    stop_loss: float = 2.0  # 止损比例%
-    take_profit: float = 5.0  # 止盈比例%
-    auto_execute: bool = False
+    """All persisted strategy keys use the same names as the UI."""
+    model_config = {"extra": "forbid", "allow_inf_nan": False}
+    min_funding_rate: float = Field(default=0.01, ge=0, le=100)
+    max_positions: int = Field(default=5, ge=1, le=100)
+    max_position_size: float = Field(default=1000, ge=50)
+    leverage: int = Field(default=3, ge=1, le=125)
+    stop_loss_pct: float = Field(default=2, gt=0, le=100)
+    take_profit_pct: float = Field(default=5, gt=0, le=100)
+    auto_execute: Literal[False] = False
 
 
 # ============ 数据库表模型 ============

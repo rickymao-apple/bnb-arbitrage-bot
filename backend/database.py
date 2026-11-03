@@ -5,12 +5,12 @@ import os
 import sys
 import logging
 from typing import Optional, List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from contextlib import contextmanager
 
 from sqlalchemy import create_engine, and_
 from sqlalchemy.orm import sessionmaker, Session
-from sqlalchemy.pool import StaticPool
+
 
 # 添加项目根目录到路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -36,8 +36,8 @@ class Database:
         # 创建数据库引擎
         self.engine = create_engine(
             f"sqlite:///{db_path}",
-            connect_args={"check_same_thread": False},
-            poolclass=StaticPool,
+            connect_args={"check_same_thread": False, "timeout": 15},
+            pool_pre_ping=True,
             echo=False
         )
 
@@ -116,7 +116,7 @@ class Database:
     def get_closed_trades(self, days: int = 30) -> List[dict]:
         """获取已平仓交易"""
         with self.get_session() as session:
-            cutoff = datetime.now() - timedelta(days=days)
+            cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
             trades = session.query(DBTrade).filter(
                 and_(
                     DBTrade.status == "closed",
@@ -199,7 +199,7 @@ class Database:
     def get_recent_opportunities(self, hours: int = 24, limit: int = 100) -> List[dict]:
         """获取最近的套利机会"""
         with self.get_session() as session:
-            cutoff = datetime.now() - timedelta(hours=hours)
+            cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=hours)
             opportunities = session.query(DBOpportunity).filter(
                 DBOpportunity.timestamp >= cutoff
             ).order_by(DBOpportunity.timestamp.desc()).limit(limit).all()
@@ -246,11 +246,18 @@ class Database:
     def cleanup_old_opportunities(self, days: int = 7):
         """清理旧的套利机会记录"""
         with self.get_session() as session:
-            cutoff = datetime.now() - timedelta(days=days)
+            cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
             session.query(DBOpportunity).filter(
                 DBOpportunity.timestamp < cutoff
             ).delete()
 
 
-# 全局数据库实例
-db = Database()
+    def save_configs(self, values: dict):
+        """Atomically persist one complete strategy document."""
+        with self.get_session() as session:
+            for key, value in values.items():
+                record = session.query(DBConfig).filter(DBConfig.key == key).first()
+                if record:
+                    record.value = value
+                else:
+                    session.add(DBConfig(key=key, value=value))
