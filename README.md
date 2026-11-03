@@ -1,168 +1,60 @@
-# 🤖 BNB Arbitrage Bot — 币安永续合约资金费率套利机器人
+# 币安资金费率监控面板
 
-> 利用币安永续合约资金费率与现货价差进行低风险套利，附带实时 Web 监控面板。
+当前版本只提供行情扫描、历史记录、真实合约持仓与余额查询。**所有开仓、平仓、杠杆修改和自动执行入口均已锁定，测试网也不下单。已有仓位请直接在币安端管理。**
 
-[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
-[![Flask](https://img.shields.io/badge/Flask-3.x-000000?style=flat-square&logo=flask&logoColor=white)](https://flask.palletsprojects.com)
-[![Binance](https://img.shields.io/badge/Binance-API-F0B90B?style=flat-square&logo=binance&logoColor=white)](https://binance-docs.github.io/apidocs)
-[![SQLite](https://img.shields.io/badge/SQLite-Database-003B57?style=flat-square&logo=sqlite&logoColor=white)](https://sqlite.org)
-[![Helped by AI](https://img.shields.io/badge/Helped%20by-AI-blueviolet?style=flat-square)](#)
+原执行实现只卖出合约，没有购买现货；平仓 BUY 还会被转换成 SELL。此版本移除了不完整的执行链路。恢复交易前，必须另行实现并验证现货与合约双腿下单、成交确认、数量精度、部分成交处理、请求超时对账、重启恢复及幂等控制。
 
----
+## 启动
 
-## 为什么做这个
+需要 Python 3.10 或以上版本，推荐 3.12。
 
-学期货的时候，我注意到币安永续合约的**资金费率**有时候非常高，而且是稳定的被动收入——只要持仓方向对，每 8 小时就会收到资金费。
-
-这是**套利**：
-- 做多现货 → 价格涨跌两边都对冲了
-- 做空永续合约 → 收取资金费
-- 净收益 = 资金费率收益，几乎不受方向影响
-
-手动盯盘效率太低，所以写了这个机器人，自动扫描机会、提醒开仓、记录收益。
-
----
-
-## 套利原理
-
-```
-永续合约资金费率套利（Delta Neutral 策略）
-
-┌─────────────────────────────────────────────────────┐
-│  资金费率 > 0（多头付费给空头）                       │
-│                                                     │
-│  做多现货 ←──────────── 对冲价格风险 ──────────────┐ │
-│  做空永续合约 ←──────── 每 8h 收取资金费 ──────────┘ │
-│                                                     │
-│  净收益 ≈ 资金费率 × 持仓金额（与价格涨跌无关）        │
-└─────────────────────────────────────────────────────┘
-
-例：BTC 资金费率 0.1% / 8h
-  = 0.3% / 天
-  = 约 109% 年化
-
-风险点：
-  1. 现货与期货价差扩大（基差风险）
-  2. 资金费率突然转负（方向反转）
-  3. 交易所流动性不足
-```
-
----
-
-## 功能特性
-
-- **实时扫描** — 自动扫描全市场永续合约，筛选资金费率超过阈值的机会
-- **风险计算** — 综合资金费率、基差、流动性评估每笔机会的风险收益比
-- **开仓建议** — 给出仓位大小建议（1x 杠杆做多现货 + 对冲空头）
-- **自动执行** — 支持配置后自动下单（需谨慎开启）
-- **Web 面板** — 实时查看持仓、历史收益、资金费率走势图
-- **止损保护** — 可配置止损和止盈比例，防止极端行情
-- **交易日志** — 所有操作记录到 SQLite，可复盘分析
-
----
-
-## 快速开始
-
-### 1. 安装依赖
-
-```bash
+```sh
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
-```
-
-### 2. 配置 API
-
-复制配置文件模板：
-
-```bash
 cp config.ini.example config.ini
-```
-
-编辑 `config.ini`，填入你的币安 API Key：
-
-```ini
-[binance]
-api_key    = 你的 API Key
-api_secret = 你的 Secret Key
-testnet    = true   # 先用测试网！
-
-[strategy]
-min_funding_rate  = 0.01   # 最低触发资金费率(%)
-max_positions     = 5      # 最大同时持仓数
-min_position_size = 50     # 最小单笔金额(USDT)
-max_position_size = 1000   # 最大单笔金额(USDT)
-leverage          = 3      # 杠杆倍数（建议 ≤3）
-stop_loss_pct     = 2.0    # 止损比例(%)
-auto_execute      = false  # 是否自动下单
-```
-
-### 3. 启动
-
-```bash
 python run.py
 ```
 
-打开浏览器访问：[http://localhost:5000](http://localhost:5000)
+打开 http://127.0.0.1:5000，在页面上输入启动终端显示的面板访问口令，再连接面板。口令不会放在 URL 或网页源码里，刷新页面需要重新输入。也可以通过 `DASHBOARD_TOKEN` 环境变量设置固定口令。默认仅监听本机，不启用调试或自动重载；如有远程访问需要，应在 HTTPS 反向代理后部署并限制网络访问。
 
----
+- 公开行情扫描不需要 API 密钥。默认使用币安测试网；测试网数据和交易对覆盖可能与主网不同。
+- 查询真实余额、持仓时，填入对应环境的**只读**合约凭证，不需要交易和提现权限。
+- 网页提交的密钥仅保留在进程内存中，服务重启后失效，不再写入 SQLite。
+- 长期配置可通过本地 `config.ini` 或环境变量提供；环境变量优先。不要将包含密钥的文件提交到 Git。
+- `--config /path/to/config.ini` 会加载指定文件，数据库相对路径也以该文件所在目录为基准。
+- 更换凭证或测试网时，先停止监控；如果请求仍在进行，等待该请求结束后再更换。
 
-## Web 面板功能
+## 扫描与统计
 
-| 页面 | 功能 |
-|------|------|
-| 仪表盘 | 实时资金费率排行、当前持仓、今日收益 |
-| 机会扫描 | 全市场扫描结果，按年化收益率排序 |
-| 持仓管理 | 当前所有套利仓位，支持一键平仓 |
-| 历史记录 | 历史交易和收益统计图表 |
-| 策略配置 | 在线修改策略参数，无需重启 |
+扫描批量获取合约标记价格和真实现货价格，仅保留双方均可交易且标的相符的 USDT 交易对，不再只检查前 50 个合约。`enabled_pairs` 可以进一步限制扫描范围。
 
----
+年化百分比 = 资金费率百分比 × (24 / 实际结算间隔小时数) × 365。例如 0.1% / 8 小时，对应简单年化 109.5%。结算间隔从币安 fundingInfo 获取，未调整的合约按 8 小时处理；返回数据还包含下次结算时间。此数值只是当前费率的外推，未扣手续费、滑点、借贷或资金成本，不能视为收益承诺。
 
-## 项目结构
+后台监控使用独立线程，生命周期不再随一次 HTTP 请求结束。HTTP 请求带连接与读取超时；上游错误会返回失败，不能冒充零余额或空仓。扫描历史保留 7 天，定期清理。策略参数会经过范围验证，并整体持久化。
 
+原数据库中的交易记录缺少完整现货成交、费用和实际资金费核对，保留为旧记录，但不再展示成实际总收益。余额和当前合约持仓直接来自交易所；这不等于已核对的现货合约对冲组合。本版本不会替已有持仓执行止盈或止损。
+
+## 旧版迁移
+
+- 旧版保存在 SQLite `config` 表中的 API 密钥不再自动加载；请改用环境变量或重新填写网页表单。
+- 旧版数据库中的明文密钥仍可能存在。本次修复不会擅自删除旧数据；迁移后请自行备份、清理这些条目，并按需在币安更新旧密钥。
+- 所有策略配置统一保存于 `strategy_v2`，不再沿用旧版不一致的键名。
+- 原配置中的 `auto_execute=true` 不会恢复交易；接口和底层客户端均拒绝交易写操作。
+
+## 环境变量
+
+`BINANCE_FUTURES_API_KEY`、`BINANCE_FUTURES_SECRET_KEY`、`BINANCE_SPOT_API_KEY`、`BINANCE_SPOT_SECRET_KEY`、`BINANCE_TESTNET`、`DASHBOARD_TOKEN`、`MIN_FUNDING_RATE`、`ENABLED_PAIRS`、`REFRESH_INTERVAL`、`DB_PATH`、`HOST`、`PORT`、`CONFIG_PATH`。
+
+现货 API 密钥字段仅为旧配置兼容保留；公开现货报价不使用密钥。交易相关策略字段也仅保留配置兼容，不执行交易。
+
+## 验证
+
+```sh
+python -m unittest discover -s tests -v
+pip check
 ```
-bnb-arbitrage-bot/
-├── run.py                      # 启动入口
-├── config.ini.example          # 配置文件模板
-├── requirements.txt
-├── backend/
-│   ├── app.py                  # Flask 路由 & API
-│   ├── arbitrage_engine.py     # 套利核心逻辑
-│   ├── binance_client.py       # 币安 API 封装
-│   ├── models.py               # 数据模型
-│   ├── database.py             # SQLite 数据库操作
-│   └── config.py               # 配置读取
-├── frontend/
-│   ├── templates/              # HTML 模板
-│   └── static/                 # JS / CSS
-├── data/                       # 运行时数据（已 gitignore）
-└── logs/                       # 日志（已 gitignore）
-```
 
----
+回归测试均离线运行，使用模拟行情和订单入口，不使用真实密钥，不发送交易。覆盖交易锁定、签名、主网/测试网路径、超时、错误处理、全市场扫描、可变结算周期、真实持仓数据来源、监控线程生命周期、配置加载、原子验证和保存、密钥不落库、身份验证及跨站拒绝。
 
-## 策略参数说明
-
-| 参数 | 说明 | 建议值 |
-|------|------|--------|
-| `min_funding_rate` | 触发套利的最低资金费率 | 0.01%（年化 ≈ 11%）|
-| `max_positions` | 同时最多持有几个套利仓位 | 3~5 |
-| `leverage` | 永续合约杠杆倍数 | ≤3（低风险） |
-| `hold_duration_hours` | 建议持仓时长 | 8（一个结算周期）|
-| `auto_execute` | 是否自动下单 | 先用 `false` 观察 |
-
----
-
-## ⚠️ 风险提示
-
-> 本项目仅供学习和研究目的。加密货币市场风险极高，**请勿投入超过你能承受损失的资金**。
->
-> - 资金费率可能突然转负，导致亏损
-> - 极端行情下基差可能大幅扩大
-> - 交易所 API 限频或宕机会影响平仓
-> - 建议先在**测试网**充分验证后再接入真实资金
-
----
-
-## License
-
-MIT — 随意 fork，有用的话点个 ⭐
+测试环境的依赖快照见 `requirements-tested.txt`。这次未进行真实币安账户或交易联调。
